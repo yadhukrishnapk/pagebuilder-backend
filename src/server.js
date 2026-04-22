@@ -6,6 +6,8 @@ import connectDB from "./config/db.js";
 import productRoutes from "./routes/productRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import pageBuilderRoutes from "./routes/pageBuilderRoutes.js";
+import uploadRoutes from "./routes/uploadRoutes.js";
+import path from "node:path";
 
 dotenv.config();
 connectDB();
@@ -34,6 +36,8 @@ app.get("/", (req, res) => {
 app.use("/products", productRoutes);
 app.use("/category", categoryRoutes);
 app.use("/page-builder", pageBuilderRoutes);
+app.use("/upload", uploadRoutes);
+app.use("/uploads", express.static(path.resolve("uploads")));
 
 const PORT = process.env.PORT || 5000;
 
