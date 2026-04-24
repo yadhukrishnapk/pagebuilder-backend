@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/db.js";
+import { runMigrations } from "./config/migrations.js";
 
 import productRoutes from "./routes/productRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
@@ -10,7 +11,13 @@ import uploadRoutes from "./routes/uploadRoutes.js";
 import path from "node:path";
 
 dotenv.config();
-connectDB();
+
+const bootstrap = async () => {
+  await connectDB();
+  await runMigrations();
+};
+
+bootstrap();
 
 const app = express();
 
