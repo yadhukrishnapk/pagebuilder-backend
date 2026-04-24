@@ -15,14 +15,22 @@ connectDB();
 const app = express();
 
 // ✅ CORS FIRST
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+const corsOptions = {
+  origin: true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-App-ID",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+  exposedHeaders: ["Content-Length", "Content-Type"],
+  maxAge: 600,
+};
+app.use(cors(corsOptions));
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -32,11 +40,16 @@ app.get("/", (req, res) => {
   res.send("API Running...");
 });
 
-// API Routes
-app.use("/products", productRoutes);
-app.use("/category", categoryRoutes);
-app.use("/page-builder", pageBuilderRoutes);
-app.use("/upload", uploadRoutes);
+// API Routes — mounted both with and without /api prefix so frontends
+// configured with either baseURL work out of the box.
+const mountApi = (base) => {
+  app.use(`${base}/products`, productRoutes);
+  app.use(`${base}/category`, categoryRoutes);
+  app.use(`${base}/page-builder`, pageBuilderRoutes);
+  app.use(`${base}/upload`, uploadRoutes);
+};
+mountApi("");
+mountApi("/api");
 app.use("/uploads", express.static(path.resolve("uploads")));
 
 const PORT = process.env.PORT || 5000;
