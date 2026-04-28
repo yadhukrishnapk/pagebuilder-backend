@@ -7,6 +7,9 @@ import { runMigrations } from "./config/migrations.js";
 import productRoutes from "./routes/productRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import pageBuilderRoutes from "./routes/pageBuilderRoutes.js";
+import storeRoutes from "./routes/storeRoutes.js";
+import blockRoutes from "./routes/blockRoutes.js";
+import menuRoutes from "./routes/menuRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import path from "node:path";
 
@@ -53,6 +56,9 @@ const mountApi = (base) => {
   app.use(`${base}/products`, productRoutes);
   app.use(`${base}/category`, categoryRoutes);
   app.use(`${base}/page-builder`, pageBuilderRoutes);
+  app.use(`${base}/stores`, storeRoutes);
+  app.use(`${base}/blocks`, blockRoutes);
+  app.use(`${base}/menus`, menuRoutes);
   app.use(`${base}/upload`, uploadRoutes);
 };
 mountApi("");

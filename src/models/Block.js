@@ -1,17 +1,12 @@
 import mongoose from "mongoose";
 
-const pageSchema = new mongoose.Schema(
+const blockSchema = new mongoose.Schema(
   {
     storeIds: [
       { type: mongoose.Schema.Types.ObjectId, ref: "Store", index: true },
     ],
     name: { type: String, required: true, trim: true },
-    slug: { type: String, required: true, trim: true, index: true },
-    viewType: {
-      type: String,
-      enum: ["desktop", "mobile"],
-      default: "desktop",
-    },
+    code: { type: String, required: true, trim: true, unique: true, index: true },
     status: {
       type: String,
       enum: ["draft", "active", "inactive"],
@@ -24,4 +19,4 @@ const pageSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-export default mongoose.model("Page", pageSchema);
+export default mongoose.model("Block", blockSchema);

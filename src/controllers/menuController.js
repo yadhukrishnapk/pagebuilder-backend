@@ -1,9 +1,11 @@
 import mongoose from "mongoose";
-import PageBuilder from "../models/PageBuilder.js";
+import Menu from "../models/Menu.js";
 import Store from "../models/Store.js";
 import { validateSchedule } from "../utils/scheduleValidation.js";
+import { validateMenuTree } from "../utils/menuTreeValidation.js";
 
 const ALLOWED_STATUSES = new Set(["draft", "active", "inactive"]);
+const ALLOWED_LOCATIONS = new Set(["header", "footer", "mobile", "custom"]);
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -34,7 +36,6 @@ const normalizeStoreIds = async (rawStoreIds) => {
   }
   const invalid = rawStoreIds.find((id) => !isValidObjectId(id));
   if (invalid) return { ids: null, error: "Invalid store id provided" };
-
   const ids = rawStoreIds.map((id) => new mongoose.Types.ObjectId(id));
   const count = await Store.countDocuments({ _id: { $in: ids } });
   if (count !== ids.length) {
@@ -43,82 +44,111 @@ const normalizeStoreIds = async (rawStoreIds) => {
   return { ids, error: null };
 };
 
-export const getPages = async (req, res) => {
+const collectMetaErrors = ({ name, code, location }, isCreate) => {
+  const errors = {};
+  if (isCreate) {
+    if (!name) errors.name = "Name is required";
+    if (!code) errors.code = "Code is required";
+  } else {
+    if (name !== undefined && !name) errors.name = "Name is required";
+    if (code !== undefined && !code) errors.code = "Code is required";
+  }
+  if (location !== undefined && !ALLOWED_LOCATIONS.has(location)) {
+    errors.location = "Invalid location";
+  }
+  return errors;
+};
+
+const applyTreeValidation = (body, errors) => {
+  if (!("items" in body)) return undefined;
+  const result = validateMenuTree(body.items);
+  if (result.errors.length > 0) {
+    errors.items = result.errors.join("; ");
+    return undefined;
+  }
+  return result.items;
+};
+
+export const getMenus = async (req, res) => {
   try {
     const filter = {};
-
     if (req.query.storeId) {
       if (!isValidObjectId(req.query.storeId)) {
         return sendValidation(res, { storeId: "Invalid store id" });
       }
       filter.storeIds = new mongoose.Types.ObjectId(req.query.storeId);
     }
-
-    if (req.query.websiteId) {
-      const websiteStores = await Store.find({
-        websiteId: String(req.query.websiteId),
-      }).select("_id");
-      filter.storeIds = { $in: websiteStores.map((s) => s._id) };
+    if (req.query.location && ALLOWED_LOCATIONS.has(req.query.location)) {
+      filter.location = req.query.location;
     }
-
     const statusFilter = parseStatusFilter(req.query.status);
     if (statusFilter) filter.status = statusFilter;
 
-    const pages = await PageBuilder.find(filter)
-      .select("-components")
+    const menus = await Menu.find(filter)
+      .select("-items")
       .populate({ path: "storeIds", select: "name code websiteId" })
       .sort({ createdAt: -1 });
 
     res.status(200).json({
       statusCode: 200,
-      message: "Pages fetched successfully",
-      data: pages,
+      message: "Menus fetched successfully",
+      data: menus,
     });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-export const getPageById = async (req, res) => {
+export const getMenuById = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Menu not found" });
     }
-    const page = await PageBuilder.findById(req.params.id).populate({
+    const menu = await Menu.findById(req.params.id).populate({
       path: "storeIds",
       select: "name code websiteId",
     });
-    if (!page) {
+    if (!menu) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Menu not found" });
     }
     res.status(200).json({
       statusCode: 200,
-      message: "Page fetched successfully",
-      data: page,
+      message: "Menu fetched successfully",
+      data: menu,
     });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-const collectCreateErrors = ({ name, slug, viewType, components }) => {
-  const errors = {};
-  if (!name) errors.name = "Name is required";
-  if (!slug) errors.slug = "Slug is required";
-  if (!viewType) errors.viewType = "View type is required";
-  if (components && !Array.isArray(components)) {
-    errors.components = "Components must be an array";
+export const getMenuByCode = async (req, res) => {
+  try {
+    const menu = await Menu.findOne({ code: req.params.code }).populate({
+      path: "storeIds",
+      select: "name code websiteId",
+    });
+    if (!menu) {
+      return res
+        .status(404)
+        .json({ statusCode: 404, message: "Menu not found" });
+    }
+    res.status(200).json({
+      statusCode: 200,
+      message: "Menu fetched successfully",
+      data: menu,
+    });
+  } catch (error) {
+    res.status(500).json({ statusCode: 500, message: error.message });
   }
-  return errors;
 };
 
-export const createPage = async (req, res) => {
+export const createMenu = async (req, res) => {
   try {
-    const errors = collectCreateErrors(req.body);
+    const errors = collectMetaErrors(req.body, true);
     const { ids: storeIds, error: storeError } = await normalizeStoreIds(
       req.body.storeIds,
     );
@@ -127,43 +157,50 @@ export const createPage = async (req, res) => {
     const schedule = validateSchedule(req.body);
     Object.assign(errors, schedule.errors);
 
+    const items = applyTreeValidation(req.body, errors);
+
     if (Object.keys(errors).length > 0) return sendValidation(res, errors);
 
-    const page = await PageBuilder.create({
+    const existing = await Menu.findOne({ code: req.body.code });
+    if (existing) {
+      return res.status(409).json({
+        statusCode: 409,
+        message: "Validation failed",
+        errors: { code: "A menu with this code already exists" },
+      });
+    }
+
+    const menu = await Menu.create({
       ...req.body,
       storeIds,
       ...schedule.normalized,
+      ...(items !== undefined ? { items } : {}),
     });
     res.status(201).json({
       statusCode: 201,
-      message: "Page created successfully",
-      data: { _id: page._id, slug: page.slug, storeIds: page.storeIds },
+      message: "Menu created successfully",
+      data: { _id: menu._id, code: menu.code, storeIds: menu.storeIds },
     });
   } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        statusCode: 409,
+        message: "Validation failed",
+        errors: { code: "A menu with this code already exists" },
+      });
+    }
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-const collectUpdateErrors = ({ name, slug, viewType, components }) => {
-  const errors = {};
-  if (name !== undefined && !name) errors.name = "Name is required";
-  if (slug !== undefined && !slug) errors.slug = "Slug is required";
-  if (viewType !== undefined && !viewType)
-    errors.viewType = "View type is required";
-  if (components !== undefined && !Array.isArray(components)) {
-    errors.components = "Components must be an array";
-  }
-  return errors;
-};
-
-export const updatePage = async (req, res) => {
+export const updateMenu = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Menu not found" });
     }
-    const errors = collectUpdateErrors(req.body);
+    const errors = collectMetaErrors(req.body, false);
 
     let storeIds;
     if (req.body.storeIds !== undefined) {
@@ -175,46 +212,63 @@ export const updatePage = async (req, res) => {
     const schedule = validateSchedule(req.body);
     Object.assign(errors, schedule.errors);
 
+    const items = applyTreeValidation(req.body, errors);
+
     if (Object.keys(errors).length > 0) return sendValidation(res, errors);
+
+    if (req.body.code) {
+      const conflict = await Menu.findOne({
+        code: req.body.code,
+        _id: { $ne: req.params.id },
+      });
+      if (conflict) {
+        return res.status(409).json({
+          statusCode: 409,
+          message: "Validation failed",
+          errors: { code: "A menu with this code already exists" },
+        });
+      }
+    }
 
     const update = { ...req.body, ...schedule.normalized };
     if (storeIds !== undefined) update.storeIds = storeIds;
+    if (items !== undefined) update.items = items;
 
-    const page = await PageBuilder.findByIdAndUpdate(req.params.id, update, {
+    const menu = await Menu.findByIdAndUpdate(req.params.id, update, {
       new: true,
       runValidators: true,
     });
-    if (!page) {
+    if (!menu) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Menu not found" });
     }
     res.status(200).json({
       statusCode: 200,
-      message: "Page updated successfully",
-      data: { _id: page._id, slug: page.slug, storeIds: page.storeIds },
+      message: "Menu updated successfully",
+      data: { _id: menu._id, code: menu.code, storeIds: menu.storeIds },
     });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-export const deletePage = async (req, res) => {
+export const deleteMenu = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Menu not found" });
     }
-    const page = await PageBuilder.findByIdAndDelete(req.params.id);
-    if (!page) {
+    const menu = await Menu.findByIdAndDelete(req.params.id);
+    if (!menu) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Menu not found" });
     }
     res
       .status(200)
-      .json({ statusCode: 200, message: "Page deleted successfully" });
+      .json({ statusCode: 200, message: "Menu deleted successfully" });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }

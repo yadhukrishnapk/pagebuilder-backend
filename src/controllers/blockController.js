@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import PageBuilder from "../models/PageBuilder.js";
+import Block from "../models/Block.js";
 import Store from "../models/Store.js";
 import { validateSchedule } from "../utils/scheduleValidation.js";
 
@@ -43,7 +43,22 @@ const normalizeStoreIds = async (rawStoreIds) => {
   return { ids, error: null };
 };
 
-export const getPages = async (req, res) => {
+const collectErrors = ({ name, code, components }, isCreate) => {
+  const errors = {};
+  if (isCreate) {
+    if (!name) errors.name = "Name is required";
+    if (!code) errors.code = "Code is required";
+  } else {
+    if (name !== undefined && !name) errors.name = "Name is required";
+    if (code !== undefined && !code) errors.code = "Code is required";
+  }
+  if (components !== undefined && !Array.isArray(components)) {
+    errors.components = "Components must be an array";
+  }
+  return errors;
+};
+
+export const getBlocks = async (req, res) => {
   try {
     const filter = {};
 
@@ -54,71 +69,74 @@ export const getPages = async (req, res) => {
       filter.storeIds = new mongoose.Types.ObjectId(req.query.storeId);
     }
 
-    if (req.query.websiteId) {
-      const websiteStores = await Store.find({
-        websiteId: String(req.query.websiteId),
-      }).select("_id");
-      filter.storeIds = { $in: websiteStores.map((s) => s._id) };
-    }
-
     const statusFilter = parseStatusFilter(req.query.status);
     if (statusFilter) filter.status = statusFilter;
 
-    const pages = await PageBuilder.find(filter)
+    const blocks = await Block.find(filter)
       .select("-components")
       .populate({ path: "storeIds", select: "name code websiteId" })
       .sort({ createdAt: -1 });
 
     res.status(200).json({
       statusCode: 200,
-      message: "Pages fetched successfully",
-      data: pages,
+      message: "Blocks fetched successfully",
+      data: blocks,
     });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-export const getPageById = async (req, res) => {
+export const getBlockById = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Block not found" });
     }
-    const page = await PageBuilder.findById(req.params.id).populate({
+    const block = await Block.findById(req.params.id).populate({
       path: "storeIds",
       select: "name code websiteId",
     });
-    if (!page) {
+    if (!block) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Block not found" });
     }
     res.status(200).json({
       statusCode: 200,
-      message: "Page fetched successfully",
-      data: page,
+      message: "Block fetched successfully",
+      data: block,
     });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-const collectCreateErrors = ({ name, slug, viewType, components }) => {
-  const errors = {};
-  if (!name) errors.name = "Name is required";
-  if (!slug) errors.slug = "Slug is required";
-  if (!viewType) errors.viewType = "View type is required";
-  if (components && !Array.isArray(components)) {
-    errors.components = "Components must be an array";
+export const getBlockByCode = async (req, res) => {
+  try {
+    const block = await Block.findOne({ code: req.params.code }).populate({
+      path: "storeIds",
+      select: "name code websiteId",
+    });
+    if (!block) {
+      return res
+        .status(404)
+        .json({ statusCode: 404, message: "Block not found" });
+    }
+    res.status(200).json({
+      statusCode: 200,
+      message: "Block fetched successfully",
+      data: block,
+    });
+  } catch (error) {
+    res.status(500).json({ statusCode: 500, message: error.message });
   }
-  return errors;
 };
 
-export const createPage = async (req, res) => {
+export const createBlock = async (req, res) => {
   try {
-    const errors = collectCreateErrors(req.body);
+    const errors = collectErrors(req.body, true);
     const { ids: storeIds, error: storeError } = await normalizeStoreIds(
       req.body.storeIds,
     );
@@ -129,41 +147,45 @@ export const createPage = async (req, res) => {
 
     if (Object.keys(errors).length > 0) return sendValidation(res, errors);
 
-    const page = await PageBuilder.create({
+    const existing = await Block.findOne({ code: req.body.code });
+    if (existing) {
+      return res.status(409).json({
+        statusCode: 409,
+        message: "Validation failed",
+        errors: { code: "A block with this code already exists" },
+      });
+    }
+
+    const block = await Block.create({
       ...req.body,
       storeIds,
       ...schedule.normalized,
     });
     res.status(201).json({
       statusCode: 201,
-      message: "Page created successfully",
-      data: { _id: page._id, slug: page.slug, storeIds: page.storeIds },
+      message: "Block created successfully",
+      data: { _id: block._id, code: block.code, storeIds: block.storeIds },
     });
   } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        statusCode: 409,
+        message: "Validation failed",
+        errors: { code: "A block with this code already exists" },
+      });
+    }
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-const collectUpdateErrors = ({ name, slug, viewType, components }) => {
-  const errors = {};
-  if (name !== undefined && !name) errors.name = "Name is required";
-  if (slug !== undefined && !slug) errors.slug = "Slug is required";
-  if (viewType !== undefined && !viewType)
-    errors.viewType = "View type is required";
-  if (components !== undefined && !Array.isArray(components)) {
-    errors.components = "Components must be an array";
-  }
-  return errors;
-};
-
-export const updatePage = async (req, res) => {
+export const updateBlock = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Block not found" });
     }
-    const errors = collectUpdateErrors(req.body);
+    const errors = collectErrors(req.body, false);
 
     let storeIds;
     if (req.body.storeIds !== undefined) {
@@ -177,44 +199,58 @@ export const updatePage = async (req, res) => {
 
     if (Object.keys(errors).length > 0) return sendValidation(res, errors);
 
+    if (req.body.code) {
+      const conflict = await Block.findOne({
+        code: req.body.code,
+        _id: { $ne: req.params.id },
+      });
+      if (conflict) {
+        return res.status(409).json({
+          statusCode: 409,
+          message: "Validation failed",
+          errors: { code: "A block with this code already exists" },
+        });
+      }
+    }
+
     const update = { ...req.body, ...schedule.normalized };
     if (storeIds !== undefined) update.storeIds = storeIds;
 
-    const page = await PageBuilder.findByIdAndUpdate(req.params.id, update, {
+    const block = await Block.findByIdAndUpdate(req.params.id, update, {
       new: true,
       runValidators: true,
     });
-    if (!page) {
+    if (!block) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Block not found" });
     }
     res.status(200).json({
       statusCode: 200,
-      message: "Page updated successfully",
-      data: { _id: page._id, slug: page.slug, storeIds: page.storeIds },
+      message: "Block updated successfully",
+      data: { _id: block._id, code: block.code, storeIds: block.storeIds },
     });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }
 };
 
-export const deletePage = async (req, res) => {
+export const deleteBlock = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Block not found" });
     }
-    const page = await PageBuilder.findByIdAndDelete(req.params.id);
-    if (!page) {
+    const block = await Block.findByIdAndDelete(req.params.id);
+    if (!block) {
       return res
         .status(404)
-        .json({ statusCode: 404, message: "Page not found" });
+        .json({ statusCode: 404, message: "Block not found" });
     }
     res
       .status(200)
-      .json({ statusCode: 200, message: "Page deleted successfully" });
+      .json({ statusCode: 200, message: "Block deleted successfully" });
   } catch (error) {
     res.status(500).json({ statusCode: 500, message: error.message });
   }

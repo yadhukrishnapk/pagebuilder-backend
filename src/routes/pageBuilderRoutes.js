@@ -1,7 +1,7 @@
 import express from "express";
 import {
   getPages,
-  getPageBySlug,
+  getPageById,
   createPage,
   updatePage,
   deletePage,
@@ -10,9 +10,9 @@ import {
 const router = express.Router();
 
 router.get("/", getPages);
-router.get("/:slug", getPageBySlug);
+router.get("/:id", getPageById);
 router.post("/", createPage);
-router.put("/:slug", updatePage);
+router.put("/:id", updatePage);
 router.delete("/:id", deletePage);
 
 export default router;
